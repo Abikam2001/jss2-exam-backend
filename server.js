@@ -11,6 +11,10 @@ const ACTIVE_PASSCODES = {
 };
 
 // 1. Authenticate Access Codes
+// Root test endpoint
+app.get('/', (req, res) => {
+  res.send('JSS2 Proctoring Server is Live and Running!');
+});
 app.post('/api/auth', (req, res) => {
   const { role, passcode, candidateName } = req.body;
   if (ACTIVE_PASSCODES[role] && ACTIVE_PASSCODES[role] === passcode) {
