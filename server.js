@@ -5,11 +5,10 @@ const path = require('path');
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: '15mb' })); // Higher limit for base64 camera snapshots
+app.use(express.json({ limit: '15mb' }));
 
 const DB_FILE = path.join(__dirname, 'results_database.json');
 
-// Helper functions for persistent JSON database
 function readDatabase() {
   if (!fs.existsSync(DB_FILE)) {
     const initialData = { submissions: [], violations: [], snapshots: [] };
@@ -30,7 +29,6 @@ function writeDatabase(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-// Master Answer Key
 const MASTER_ANSWER_KEYS = {
   0: 1, 1: 2, 2: 2, 3: 1, 4: 1, 5: 1, 6: 0, 7: 1, 8: 0, 9: 2,
   10: 0, 11: 2, 12: 1, 13: 0, 14: 1, 15: 1, 16: 2, 17: 1, 18: 3, 19: 1,
@@ -47,13 +45,27 @@ app.get('/', (req, res) => {
   res.send('MAN District IV Selection Test Server is Active!');
 });
 
-// Authentication Endpoint
+// AUTHENTICATION ENDPOINT WITH 9:45 AM TIME-LOCK
 app.post('/api/auth', (req, res) => {
   const { role, passcode, candidateName, schoolName } = req.body;
 
   if (!candidateName || !passcode) {
     return res.status(400).json({ success: false, message: "Name and Passcode are required." });
   }
+
+  // --- TIME-GATE LOCK (Sept 18, 2026 at 09:45 AM WAT) ---
+  const now = new Date();
+  const examOpenTime = new Date('2026-09-18T09:45:00+01:00');
+
+  // Teachers/Invigilators can ALWAYS log in; Students are blocked until 9:45 AM
+  if (role === 'student' && now < examOpenTime) {
+    const minutesLeft = Math.ceil((examOpenTime - now) / (1000 * 60));
+    return res.status(403).json({ 
+      success: false, 
+      message: `The portal is currently locked. Student authentication opens at 9:45 AM prompt (in approx. ${minutesLeft} mins).` 
+    });
+  }
+  // ------------------------------------------------------
 
   if (role === 'student') {
     if (!schoolName) {
@@ -75,7 +87,6 @@ app.post('/api/auth', (req, res) => {
   return res.status(400).json({ success: false, message: "Invalid Role Selected." });
 });
 
-// Log Security Violations
 app.post('/api/proctor/log-violation', (req, res) => {
   const { candidateName, schoolName, violationType } = req.body;
   const db = readDatabase();
@@ -91,7 +102,6 @@ app.post('/api/proctor/log-violation', (req, res) => {
   return res.status(200).json({ logged: true });
 });
 
-// Upload & Store Proctoring Camera Snapshots
 app.post('/api/proctor/snapshot', (req, res) => {
   const { candidateName, schoolName, imageBase64, eventLabel } = req.body;
   const db = readDatabase();
@@ -104,7 +114,6 @@ app.post('/api/proctor/snapshot', (req, res) => {
     timestamp: new Date().toLocaleTimeString()
   });
 
-  // Keep latest 200 snapshots to optimize memory
   if (db.snapshots.length > 200) {
     db.snapshots = db.snapshots.slice(-200);
   }
@@ -113,7 +122,6 @@ app.post('/api/proctor/snapshot', (req, res) => {
   return res.status(200).json({ success: true });
 });
 
-// Submit & Score Examination (With Anti-Duplicate Logic)
 app.post('/api/exam/submit', (req, res) => {
   const { candidateName, schoolName, answers } = req.body;
   
@@ -141,7 +149,6 @@ app.post('/api/exam/submit', (req, res) => {
     submittedAt: new Date().toLocaleString()
   };
 
-  // Prevent duplicate submissions: Update if student already exists
   const existingIdx = db.submissions.findIndex(s => s.candidateName.toLowerCase() === candidateName.toLowerCase() && s.schoolName.toLowerCase() === schoolName.toLowerCase());
   
   if (existingIdx !== -1) {
@@ -154,7 +161,6 @@ app.post('/api/exam/submit', (req, res) => {
   return res.status(200).json({ success: true, score, totalQuestions, percentage });
 });
 
-// Teacher Results & Proctoring Audit Endpoint
 app.get('/api/teacher/results', (req, res) => {
   const db = readDatabase();
   return res.status(200).json({
