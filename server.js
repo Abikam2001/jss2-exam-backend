@@ -5,22 +5,24 @@ const path = require('path');
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '15mb' })); // Higher limit for base64 camera snapshots
 
 const DB_FILE = path.join(__dirname, 'results_database.json');
 
-// Helper functions for file-based database persistence
+// Helper functions for persistent JSON database
 function readDatabase() {
   if (!fs.existsSync(DB_FILE)) {
-    const initialData = { submissions: [], violations: [] };
+    const initialData = { submissions: [], violations: [], snapshots: [] };
     fs.writeFileSync(DB_FILE, JSON.stringify(initialData, null, 2));
     return initialData;
   }
   try {
     const data = fs.readFileSync(DB_FILE, 'utf8');
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    if (!parsed.snapshots) parsed.snapshots = [];
+    return parsed;
   } catch (err) {
-    return { submissions: [], violations: [] };
+    return { submissions: [], violations: [], snapshots: [] };
   }
 }
 
@@ -37,15 +39,15 @@ const MASTER_ANSWER_KEYS = {
 };
 
 const AUTH_DATABASE = {
-  teachers: ["TEA-MAN-9982", "INV-JSS2-0010"],
-  students: Array.from({ length: 150 }, (_, i) => `STU-2026-${String(i + 1).padStart(3, '0')}`)
+  teachers: ["TEA-MAN-9982", "INV-DIST4-2026"],
+  students: Array.from({ length: 200 }, (_, i) => `STU-DIST4-${String(i + 1).padStart(3, '0')}`)
 };
 
 app.get('/', (req, res) => {
-  res.send('JSS2 Proctoring Server is Live & Persistent!');
+  res.send('MAN District IV Selection Test Server is Active!');
 });
 
-// Authentication Endpoint (Checks Name, School, Passcode)
+// Authentication Endpoint
 app.post('/api/auth', (req, res) => {
   const { role, passcode, candidateName, schoolName } = req.body;
 
@@ -55,7 +57,7 @@ app.post('/api/auth', (req, res) => {
 
   if (role === 'student') {
     if (!schoolName) {
-      return res.status(400).json({ success: false, message: "School Name is required for students." });
+      return res.status(400).json({ success: false, message: "School Name is required." });
     }
     if (AUTH_DATABASE.students.includes(passcode.trim())) {
       return res.status(200).json({ success: true, candidateName, schoolName, role: "student" });
@@ -89,9 +91,31 @@ app.post('/api/proctor/log-violation', (req, res) => {
   return res.status(200).json({ logged: true });
 });
 
-// Submit & Score Examination
+// Upload & Store Proctoring Camera Snapshots
+app.post('/api/proctor/snapshot', (req, res) => {
+  const { candidateName, schoolName, imageBase64, eventLabel } = req.body;
+  const db = readDatabase();
+
+  db.snapshots.push({
+    candidateName,
+    schoolName: schoolName || "N/A",
+    imageBase64,
+    eventLabel: eventLabel || "Routine Check",
+    timestamp: new Date().toLocaleTimeString()
+  });
+
+  // Keep latest 200 snapshots to optimize memory
+  if (db.snapshots.length > 200) {
+    db.snapshots = db.snapshots.slice(-200);
+  }
+
+  writeDatabase(db);
+  return res.status(200).json({ success: true });
+});
+
+// Submit & Score Examination (With Anti-Duplicate Logic)
 app.post('/api/exam/submit', (req, res) => {
-  const { candidateName, schoolName, answers, timeSpent } = req.body;
+  const { candidateName, schoolName, answers } = req.body;
   
   let score = 0;
   const totalQuestions = Object.keys(MASTER_ANSWER_KEYS).length;
@@ -113,26 +137,33 @@ app.post('/api/exam/submit', (req, res) => {
     score,
     totalQuestions,
     percentage,
-    timeSpent: timeSpent || "60 mins",
     violations: studentViolations,
     submittedAt: new Date().toLocaleString()
   };
 
-  db.submissions.push(resultRecord);
-  writeDatabase(db);
+  // Prevent duplicate submissions: Update if student already exists
+  const existingIdx = db.submissions.findIndex(s => s.candidateName.toLowerCase() === candidateName.toLowerCase() && s.schoolName.toLowerCase() === schoolName.toLowerCase());
+  
+  if (existingIdx !== -1) {
+    db.submissions[existingIdx] = resultRecord;
+  } else {
+    db.submissions.push(resultRecord);
+  }
 
+  writeDatabase(db);
   return res.status(200).json({ success: true, score, totalQuestions, percentage });
 });
 
-// Admin Dashboard Results Endpoint
+// Teacher Results & Proctoring Audit Endpoint
 app.get('/api/teacher/results', (req, res) => {
   const db = readDatabase();
   return res.status(200).json({
     totalSubmissions: db.submissions.length,
     submissions: db.submissions,
-    recentViolations: db.violations
+    recentViolations: db.violations,
+    snapshots: db.snapshots
   });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`MAN District IV Competition Server running on port ${PORT}`));
